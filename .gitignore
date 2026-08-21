@@ -1,0 +1,6 @@
+/bin/
+# Local build output.
+/dist/
+/.env
+/.env.*
+!/.env.example

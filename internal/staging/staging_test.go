@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pengmd/sync-release-to-gitee/internal/domain"
+	"sync-release-to-gitee/internal/domain"
 )
 
 func TestPrepareAssetAtomicAndTransform(t *testing.T) {

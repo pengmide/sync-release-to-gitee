@@ -9,12 +9,12 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/pengmd/sync-release-to-gitee/internal/config"
-	"github.com/pengmd/sync-release-to-gitee/internal/domain"
-	"github.com/pengmd/sync-release-to-gitee/internal/httpx"
-	"github.com/pengmd/sync-release-to-gitee/internal/planner"
-	"github.com/pengmd/sync-release-to-gitee/internal/staging"
-	"github.com/pengmd/sync-release-to-gitee/internal/transform"
+	"sync-release-to-gitee/internal/config"
+	"sync-release-to-gitee/internal/domain"
+	"sync-release-to-gitee/internal/httpx"
+	"sync-release-to-gitee/internal/planner"
+	"sync-release-to-gitee/internal/staging"
+	"sync-release-to-gitee/internal/transform"
 )
 
 const defaultStaleStagingAge = 7 * 24 * time.Hour
@@ -244,7 +244,8 @@ func (s *Syncer) cleanRelease(ctx context.Context, release domain.Release, branc
 		Prerelease:      release.Prerelease,
 		TargetCommitish: branch,
 	}
-	if _, err := s.gitee.CreateRelease(ctx, input); err != nil {
+	created, err := s.gitee.CreateRelease(ctx, input)
+	if err != nil {
 		if httpx.IsUnknown(err) {
 			return s.unknownCreateError(ctx, release.TagName, err)
 		}
@@ -257,6 +258,9 @@ func (s *Syncer) cleanRelease(ctx context.Context, release domain.Release, branc
 	}
 	if err := s.wait(ctx, s.rate.CreateDelay); err != nil {
 		return fmt.Errorf("wait after recreating Gitee release %q: %w", release.TagName, err)
+	}
+	if err := s.confirmCreatedRelease(ctx, created, release.TagName); err != nil {
+		return err
 	}
 	return nil
 }
@@ -311,6 +315,9 @@ func (s *Syncer) syncRelease(ctx context.Context, run *staging.Run, release doma
 	if err := s.wait(ctx, s.rate.CreateDelay); err != nil {
 		return nil, fmt.Errorf("wait after creating Gitee release %q: %w", release.TagName, err)
 	}
+	if err := s.confirmCreatedRelease(ctx, created, release.TagName); err != nil {
+		return nil, err
+	}
 	if stage == nil {
 		return nil, nil
 	}
@@ -344,6 +351,26 @@ func (s *Syncer) syncRelease(ctx context.Context, run *staging.Run, release doma
 	}
 	stage = nil
 	return confirmed, nil
+}
+
+func (s *Syncer) confirmCreatedRelease(ctx context.Context, created domain.Release, expectedTag string) error {
+	remote, found, err := s.gitee.FindReleaseByID(ctx, created.ID)
+	if err != nil {
+		return &RemotePartialError{
+			Tag:          expectedTag,
+			ReleaseID:    created.ID,
+			Cause:        err,
+			RecoveryHint: "creation response was received but the release could not be verified; inspect Gitee before retrying",
+		}
+	}
+	if !found || remote.TagName != expectedTag {
+		return &RemotePartialError{
+			Tag:          expectedTag,
+			ReleaseID:    created.ID,
+			RecoveryHint: "creation response was received but the release is not visible through the Gitee Release API; no attachment was uploaded",
+		}
+	}
+	return nil
 }
 
 func (s *Syncer) reconcileUploadFailure(ctx context.Context, tag string, created domain.Release, asset domain.Asset, confirmed []string, cause error) (bool, error) {

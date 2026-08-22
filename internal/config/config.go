@@ -63,28 +63,29 @@ func Defaults() Config {
 
 // Usage returns the stable help text shown by the binary.
 func Usage() string {
-	return `Usage:
-  release2gitee [flags]
+	return `用法：
+  sync-release-to-gitee [选项]
 
-Required configuration:
+必填配置：
   --github-owner, --github-repo, --gitee-owner, --gitee-repo, --gitee-token
 
-Flags:
+选项：
   --github-owner string
   --github-repo string
   --github-token string
   --gitee-owner string
   --gitee-repo string
   --gitee-token string
-  --github-latest-release-count int                 (default 5)
-  --gitee-retain-release-attach-files-count int     (default 3)
-  --release-body-url-replace[=true|false]           (default true)
-  --latest-json-url-replace[=true|false]            (default true)
+  --github-latest-release-count int                 （默认 5）
+  --gitee-retain-release-attach-files-count int     （默认 3）
+  --release-body-url-replace[=true|false]           （默认 true）
+  --latest-json-url-replace[=true|false]            （默认 true）
   --gitee-branch string
-  --dry-run
-  -v, --verbose
-  -q, --quiet
-  --version
+  --dry-run                                      仅输出计划，不执行写入
+  -v, --verbose                                 输出调试日志
+  -q, --quiet                                   静默模式
+  --version                                     输出版本
+  -h, --help                                    显示本帮助
 `
 }
 
@@ -100,7 +101,7 @@ func Load(args []string, lookup LookupEnv) (Config, []string, error) {
 	cfg := Defaults()
 	var warnings []string
 
-	fs := flag.NewFlagSet("release2gitee", flag.ContinueOnError)
+	fs := flag.NewFlagSet("sync-release-to-gitee", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 
 	var (

@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pengmd/sync-release-to-gitee/internal/domain"
-	"github.com/pengmd/sync-release-to-gitee/internal/httpx"
+	"sync-release-to-gitee/internal/domain"
+	"sync-release-to-gitee/internal/httpx"
 )
 
 func TestListReleasesUsesFirstPageAndNormalizesBody(t *testing.T) {

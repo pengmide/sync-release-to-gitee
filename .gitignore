@@ -4,3 +4,5 @@
 /.env
 /.env.*
 !/.env.example
+/scripts/sync-to-gitee.sh
+/docs/plan.md

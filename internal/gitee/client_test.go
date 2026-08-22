@@ -9,10 +9,11 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
-	"github.com/pengmd/sync-release-to-gitee/internal/domain"
-	"github.com/pengmd/sync-release-to-gitee/internal/httpx"
+	"sync-release-to-gitee/internal/domain"
+	"sync-release-to-gitee/internal/httpx"
 )
 
 func TestListAndDefaultBranchContract(t *testing.T) {
@@ -146,5 +147,21 @@ func TestFindReleaseByTagAndUnknownCreateResponse(t *testing.T) {
 	_, err = client.CreateRelease(context.Background(), domain.CreateReleaseInput{TagName: "v2", Name: "v2", Body: "body", TargetCommitish: "main"})
 	if err == nil || !httpx.IsUnknown(err) {
 		t.Fatalf("CreateRelease() error = %v, want unknown result", err)
+	}
+}
+
+func TestCreateReleaseRejectsBusinessErrorWithHTTP2xx(t *testing.T) {
+	t.Parallel()
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		_, _ = io.WriteString(writer, "{\"message\":\"tag does not exist\"}")
+	}))
+	defer server.Close()
+	client := New(server.URL, "owner", "repo", "gitee-token", httpx.New(httpx.Options{MetadataDoer: server.Client(), DownloadDoer: server.Client()}))
+	_, err := client.CreateRelease(context.Background(), domain.CreateReleaseInput{TagName: "v1", Name: "v1", Body: "body", TargetCommitish: "main"})
+	if err == nil || !strings.Contains(err.Error(), "tag does not exist") {
+		t.Fatalf("CreateRelease() error = %v, want business response error", err)
+	}
+	if httpx.IsUnknown(err) {
+		t.Fatalf("business response error should not be unknown: %v", err)
 	}
 }

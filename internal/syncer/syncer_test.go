@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pengmd/sync-release-to-gitee/internal/config"
-	"github.com/pengmd/sync-release-to-gitee/internal/domain"
-	"github.com/pengmd/sync-release-to-gitee/internal/httpx"
+	"sync-release-to-gitee/internal/config"
+	"sync-release-to-gitee/internal/domain"
+	"sync-release-to-gitee/internal/httpx"
 )
 
 func TestRunDryRunNeverWrites(t *testing.T) {

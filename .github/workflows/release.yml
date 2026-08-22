@@ -1,0 +1,92 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-linux:
+    name: Build Linux amd64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - name: Build archive
+        run: |
+          mkdir -p dist/package
+          GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w -X main.version=$GITHUB_REF_NAME" -o dist/package/sync-release-to-gitee ./cmd/release2gitee
+          tar -C dist/package -czf dist/sync-release-to-gitee-linux-amd64.tar.gz sync-release-to-gitee
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-linux-amd64
+          path: dist/sync-release-to-gitee-linux-amd64.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
+  build-macos:
+    name: Build macOS universal
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - name: Build universal archive
+        run: |
+          mkdir -p dist/package
+          GOOS=darwin GOARCH=amd64 go build -trimpath -ldflags "-s -w -X main.version=$GITHUB_REF_NAME" -o dist/sync-release-to-gitee-amd64 ./cmd/release2gitee
+          GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags "-s -w -X main.version=$GITHUB_REF_NAME" -o dist/sync-release-to-gitee-arm64 ./cmd/release2gitee
+          lipo -create -output dist/package/sync-release-to-gitee dist/sync-release-to-gitee-amd64 dist/sync-release-to-gitee-arm64
+          tar -C dist/package -czf dist/sync-release-to-gitee-universal-apple-darwin.tar.gz sync-release-to-gitee
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-macos-universal
+          path: dist/sync-release-to-gitee-universal-apple-darwin.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
+  build-windows:
+    name: Build Windows amd64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - name: Build archive
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist/package | Out-Null
+          $env:GOOS = 'windows'
+          $env:GOARCH = 'amd64'
+          go build -trimpath -ldflags "-s -w -X main.version=$env:GITHUB_REF_NAME" -o dist/package/sync-release-to-gitee.exe ./cmd/release2gitee
+          Compress-Archive -Path dist/package/sync-release-to-gitee.exe -DestinationPath dist/sync-release-to-gitee-windows-amd64.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-windows-amd64
+          path: dist/sync-release-to-gitee-windows-amd64.zip
+          if-no-files-found: error
+          retention-days: 1
+
+  publish-github-release:
+    name: Publish GitHub Release
+    needs: [build-linux, build-macos, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+      - name: Create GitHub Release and upload assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" release-assets/* --title "$GITHUB_REF_NAME" --generate-notes

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/pengmd/sync-release-to-gitee/internal/domain"
+	"sync-release-to-gitee/internal/domain"
 )
 
 // BuildPlan applies the Rust-compatible merge, stable sort, tag de-duplication,

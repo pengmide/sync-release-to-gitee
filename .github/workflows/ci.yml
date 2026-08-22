@@ -74,4 +74,4 @@ jobs:
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
-        run: go build -trimpath -o dist/release2gitee-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.suffix }} ./cmd/release2gitee
+        run: go build -trimpath -o dist/sync-release-to-gitee-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.suffix }} ./cmd/release2gitee

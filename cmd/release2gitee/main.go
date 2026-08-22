@@ -10,11 +10,11 @@ import (
 	"os"
 	"os/signal"
 
-	"github.com/pengmd/sync-release-to-gitee/internal/config"
-	"github.com/pengmd/sync-release-to-gitee/internal/gitee"
-	"github.com/pengmd/sync-release-to-gitee/internal/github"
-	"github.com/pengmd/sync-release-to-gitee/internal/httpx"
-	"github.com/pengmd/sync-release-to-gitee/internal/syncer"
+	"sync-release-to-gitee/internal/config"
+	"sync-release-to-gitee/internal/gitee"
+	"sync-release-to-gitee/internal/github"
+	"sync-release-to-gitee/internal/httpx"
+	"sync-release-to-gitee/internal/syncer"
 )
 
 // version is intentionally mutable so release builds can inject a tag with:
@@ -35,7 +35,7 @@ func run(args []string, stdout, stderr io.Writer, lookup config.LookupEnv) int {
 		_, _ = fmt.Fprintln(stdout, version)
 		return 0
 	case err != nil:
-		_, _ = fmt.Fprintf(stderr, "release2gitee: %v\n\n%s", err, config.Usage())
+		_, _ = fmt.Fprintf(stderr, "sync-release-to-gitee: %v\n\n%s", err, config.Usage())
 		return 2
 	}
 
@@ -47,7 +47,7 @@ func run(args []string, stdout, stderr io.Writer, lookup config.LookupEnv) int {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	httpClient := httpx.New(httpx.Options{UserAgent: "release2gitee/" + version})
+	httpClient := httpx.New(httpx.Options{UserAgent: "sync-release-to-gitee/" + version})
 	githubClient := github.New(cfg.GitHubAPIBaseURL, cfg.GitHubOwner, cfg.GitHubRepo, cfg.GitHubToken, httpClient)
 	giteeClient := gitee.New(cfg.GiteeAPIBaseURL, cfg.GiteeOwner, cfg.GiteeRepo, cfg.GiteeToken, httpClient)
 	runner := syncer.New(cfg, githubClient, giteeClient, logger, syncer.RatePolicy{})
@@ -55,13 +55,13 @@ func run(args []string, stdout, stderr io.Writer, lookup config.LookupEnv) int {
 	if cfg.DryRun {
 		for _, line := range syncer.DryRunText(summary.Plan, cfg.GitHubLatestReleaseCount) {
 			if _, writeErr := fmt.Fprintln(stdout, line); writeErr != nil {
-				_, _ = fmt.Fprintf(stderr, "release2gitee: print dry-run plan: %v\n", writeErr)
+				_, _ = fmt.Fprintf(stderr, "sync-release-to-gitee: 输出 dry-run 计划失败：%v\n", writeErr)
 				return 1
 			}
 		}
 	}
 	if err != nil {
-		_, _ = fmt.Fprintf(stderr, "release2gitee: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "sync-release-to-gitee: %v\n", err)
 		return 1
 	}
 	logger.Info(

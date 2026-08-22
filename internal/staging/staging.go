@@ -14,7 +14,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/pengmd/sync-release-to-gitee/internal/domain"
+	"sync-release-to-gitee/internal/domain"
 )
 
 const (

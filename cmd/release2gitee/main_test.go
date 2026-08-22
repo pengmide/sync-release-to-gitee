@@ -12,7 +12,7 @@ func TestRunHelpAndVersion(t *testing.T) {
 	if code := run([]string{"--help"}, &stdout, &stderr, mapLookup(nil)); code != 0 {
 		t.Fatalf("help exit code = %d", code)
 	}
-	if !strings.Contains(stdout.String(), "Usage:") || stderr.Len() != 0 {
+	if !strings.Contains(stdout.String(), "用法：") || !strings.Contains(stdout.String(), "sync-release-to-gitee") || stderr.Len() != 0 {
 		t.Fatalf("help stdout/stderr = %q / %q", stdout.String(), stderr.String())
 	}
 

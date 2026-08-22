@@ -11,8 +11,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/pengmd/sync-release-to-gitee/internal/domain"
-	"github.com/pengmd/sync-release-to-gitee/internal/httpx"
+	"sync-release-to-gitee/internal/domain"
+	"sync-release-to-gitee/internal/httpx"
 )
 
 const maxMetadataBytes = 16 << 20

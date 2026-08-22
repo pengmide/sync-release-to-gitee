@@ -14,8 +14,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/pengmd/sync-release-to-gitee/internal/domain"
-	"github.com/pengmd/sync-release-to-gitee/internal/httpx"
+	"sync-release-to-gitee/internal/domain"
+	"sync-release-to-gitee/internal/httpx"
 )
 
 const maxMetadataBytes = 16 << 20
@@ -118,8 +118,19 @@ func (c *Client) CreateRelease(ctx context.Context, input domain.CreateReleaseIn
 	if err := c.HTTP.CheckResponse(response, "create Gitee release"); err != nil {
 		return domain.Release{}, err
 	}
+	rawResponse, err := io.ReadAll(io.LimitReader(response.Body, maxMetadataBytes))
+	if err != nil {
+		return domain.Release{}, &httpx.OpError{
+			Operation: "create Gitee release",
+			Method:    http.MethodPost,
+			URL:       httpx.RedactURL(endpoint),
+			Unknown:   true,
+			Summary:   "successful create response could not be read",
+			Err:       err,
+		}
+	}
 	var release releaseDTO
-	if err := json.NewDecoder(io.LimitReader(response.Body, maxMetadataBytes)).Decode(&release); err != nil {
+	if err := json.Unmarshal(rawResponse, &release); err != nil {
 		return domain.Release{}, &httpx.OpError{
 			Operation: "create Gitee release",
 			Method:    http.MethodPost,
@@ -129,7 +140,20 @@ func (c *Client) CreateRelease(ctx context.Context, input domain.CreateReleaseIn
 			Err:       err,
 		}
 	}
-	return release.domain(), nil
+	created := release.domain()
+	if created.ID <= 0 || created.TagName == "" {
+		return domain.Release{}, businessResponseError(endpoint, "create Gitee release", rawResponse)
+	}
+	if created.TagName != input.TagName {
+		return domain.Release{}, &httpx.OpError{
+			Operation: "create Gitee release",
+			Method:    http.MethodPost,
+			URL:       httpx.RedactURL(endpoint),
+			Unknown:   true,
+			Summary:   "create response tag does not match the requested tag",
+		}
+	}
+	return created, nil
 }
 
 // DeleteRelease deletes exactly one Release ID and never retries the write.
@@ -288,4 +312,31 @@ func (r releaseDTO) domain() domain.Release {
 		release.Assets = append(release.Assets, domain.Asset{Name: asset.Name, Size: asset.Size})
 	}
 	return release
+}
+
+func businessResponseError(endpoint *url.URL, operation string, rawResponse []byte) error {
+	var payload struct {
+		Message string `json:"message"`
+		Error   string `json:"error"`
+	}
+	_ = json.Unmarshal(rawResponse, &payload)
+	summary := "remote API returned a successful HTTP status without a Release object"
+	if message := strings.TrimSpace(payload.Message); message != "" {
+		summary += ": " + truncateMessage(message, 200)
+	} else if message := strings.TrimSpace(payload.Error); message != "" {
+		summary += ": " + truncateMessage(message, 200)
+	}
+	return &httpx.OpError{
+		Operation: operation,
+		Method:    http.MethodPost,
+		URL:       httpx.RedactURL(endpoint),
+		Summary:   summary,
+	}
+}
+
+func truncateMessage(value string, maximum int) string {
+	if len(value) <= maximum {
+		return value
+	}
+	return value[:maximum] + "…"
 }

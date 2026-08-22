@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/pengmd/sync-release-to-gitee/internal/domain"
+	"sync-release-to-gitee/internal/domain"
 )
 
 func TestCompareTagCompatibility(t *testing.T) {

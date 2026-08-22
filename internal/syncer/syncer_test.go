@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -206,6 +208,81 @@ func TestRunDownloadFailureDoesNotCreateRelease(t *testing.T) {
 	}
 	if len(gitee.creates) != 0 {
 		t.Fatalf("creates = %#v, want none", gitee.creates)
+	}
+}
+
+func TestRunWritesChineseAttachmentProgressLogs(t *testing.T) {
+	t.Parallel()
+	firstSize := int64(3)
+	secondSize := int64(4)
+	github := &fakeGitHub{
+		releases: []domain.Release{sourceRelease(20, "v2.0.0", []domain.Asset{
+			{Name: "first.zip", Size: &firstSize, DownloadURL: "first"},
+			{Name: "second.zip", Size: &secondSize, DownloadURL: "second"},
+		})},
+		downloads: map[string]string{"first": "one", "second": "two!"},
+	}
+	gitee := &fakeGitee{branch: "main", nextID: 100}
+	var logs strings.Builder
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	cfg := testConfig(t)
+	cfg.GiteeRetainReleaseAttachFilesCount = 1
+
+	if _, err := New(cfg, github, gitee, logger, noWaitPolicy()).Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"已获取远端 Release 清单",
+		"开始同步 Release",
+		"附件总数=2",
+		"开始下载 GitHub 附件",
+		"进度=1/2",
+		"文件=first.zip",
+		"GitHub 附件下载进度",
+		"GitHub 附件下载完成",
+		"开始上传附件到 Gitee",
+		"Gitee 附件上传进度",
+		"Gitee 附件上传完成",
+		"Release 同步完成",
+		"已上传附件数=2",
+	} {
+		if !strings.Contains(logs.String(), want) {
+			t.Fatalf("日志缺少 %q：%s", want, logs.String())
+		}
+	}
+}
+
+func TestProgressWriterResetsPartialDownload(t *testing.T) {
+	t.Parallel()
+	file, err := os.CreateTemp(t.TempDir(), "download-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	size := int64(len("complete"))
+	tracker := newTransferProgress(slog.New(slog.NewTextHandler(io.Discard, nil)), "GitHub 附件下载", "v1.0.0", "artifact.zip", 1, 1, &size)
+	writer := &progressWriter{writer: file, progress: tracker}
+	if _, err := io.WriteString(writer, "partial"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Truncate(0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writer.Seek(0, io.SeekStart); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.WriteString(writer, "complete"); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(file.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "complete" || tracker.transferred != int64(len("complete")) {
+		t.Fatalf("content=%q transferred=%d", content, tracker.transferred)
 	}
 }
 

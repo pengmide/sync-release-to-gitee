@@ -76,10 +76,11 @@ gitee_token。
 - 白名单外且附件数大于 2 的旧 Gitee Release，会按既有规则删除后重建为仅保留源码附件的 Release。
 - 附件下载完成后才创建 Gitee Release；下载、转换或创建失败时不会上传不完整附件。
 - 上传结果未知时会重新查询远端状态；确认不完整时只尝试删除本次刚创建的 Release。
+- 下载和上传均输出文件序号、字节进度、传输速度与预计剩余时间。
 - token、Authorization Header、签名下载 URL 和服务端错误正文不会写入日志。
 
-请不要把 token 写入脚本、命令行参数、日志或 Git 仓库。若曾使用旧脚本中保存的
-明文 token，请立即轮换。
+请不要把 token 写入会提交到 Git 的脚本、命令行参数或日志。仅限本机使用的凭证
+脚本必须加入 .gitignore；若曾将明文 token 提交到仓库，请立即轮换。
 
 ## 开发验证
 
@@ -92,9 +93,12 @@ amd64、Windows amd64、macOS amd64 和 arm64 制品。推送匹配 vX.Y.Z 的 G
 tag 时，Release workflow 会自动创建 GitHub Release，并上传 Linux amd64、
 macOS universal 与 Windows amd64 的压缩制品；不会发布到 crates.io。
 
-## 相关文档
+发布制品分别为 `sync-release-to-gitee-linux-amd64.tar.gz`、
+`sync-release-to-gitee-universal-apple-darwin.tar.gz` 与
+`sync-release-to-gitee-windows-amd64.zip`。
 
-- [实施计划](docs/plan.md)
+相关文档：
+
 - [行为契约](docs/behavior-contract.md)
 - [运维说明](docs/operations.md)
 - [失败恢复说明](docs/recovery.md)

@@ -407,3 +407,27 @@ func (w *limitWriter) Write(content []byte) (int, error) {
 	}
 	return count, fmt.Errorf("asset exceeds %d-byte staging limit", maxAssetBytes)
 }
+
+// Seek and Truncate let a retried downloader safely discard a partial attempt.
+// The wrapped staging file is reset before the next response body is copied.
+func (w *limitWriter) Seek(offset int64, whence int) (int64, error) {
+	seeker, ok := w.writer.(io.Seeker)
+	if !ok {
+		return 0, errors.New("staging download target does not support seeking")
+	}
+	return seeker.Seek(offset, whence)
+}
+
+func (w *limitWriter) Truncate(size int64) error {
+	truncater, ok := w.writer.(interface{ Truncate(int64) error })
+	if !ok {
+		return errors.New("staging download target does not support truncation")
+	}
+	if err := truncater.Truncate(size); err != nil {
+		return err
+	}
+	if size == 0 {
+		w.remaining = maxAssetBytes
+	}
+	return nil
+}

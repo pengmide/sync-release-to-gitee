@@ -136,7 +136,7 @@ func (s *Syncer) Run(ctx context.Context) (summary Summary, resultErr error) {
 	}
 
 	if _, err := staging.CleanupExpired(s.config.StagingRoot, s.staleAge, s.now()); err != nil {
-		s.warning(&summary, "could not clean expired staging directories")
+		s.warning(&summary, "清理过期临时目录失败")
 	}
 	run, err := staging.NewRun(s.config.StagingRoot)
 	if err != nil {
@@ -144,7 +144,7 @@ func (s *Syncer) Run(ctx context.Context) (summary Summary, resultErr error) {
 	}
 	defer func() {
 		if err := run.Cleanup(); err != nil {
-			s.warning(&summary, "could not clean this run staging directory")
+			s.warning(&summary, "清理本次同步的临时目录失败")
 		}
 	}()
 
@@ -156,11 +156,23 @@ func (s *Syncer) Run(ctx context.Context) (summary Summary, resultErr error) {
 	if err != nil {
 		return summary, fmt.Errorf("list Gitee releases before cleanup: %w", err)
 	}
+	s.logger.Info(
+		"已获取远端 Release 清单",
+		"GitHub Release 数", len(githubReleases),
+		"Gitee Release 数", len(giteeBefore),
+	)
 	branch, err := s.targetBranch(ctx)
 	if err != nil {
 		return summary, err
 	}
 	summary.Plan = planner.BuildPlan(githubReleases, giteeBefore, s.config.GiteeRetainReleaseAttachFilesCount)
+	s.logger.Info(
+		"已生成同步计划",
+		"待重建 Release 数", len(summary.Plan.Cleanup),
+		"待创建并上传附件的 Release 数", len(summary.Plan.CreateAndUpload),
+		"待仅创建元数据的 Release 数", len(summary.Plan.CreateMetadataOnly),
+		"待跳过 Release 数", len(summary.Plan.SkippedExisting),
+	)
 	if s.config.DryRun {
 		summary.DryRun = true
 		return summary, nil
@@ -185,7 +197,7 @@ func (s *Syncer) Run(ctx context.Context) (summary Summary, resultErr error) {
 	for _, item := range summary.Plan.Sync {
 		if _, found := existing[item.Release.TagName]; found {
 			summary.SkippedTags = append(summary.SkippedTags, item.Release.TagName)
-			s.logger.Info("Gitee release already exists; skipping", "tag", item.Release.TagName)
+			s.logger.Info("跳过已存在的 Gitee Release", "标签", item.Release.TagName)
 			continue
 		}
 		uploaded, err := s.syncRelease(ctx, run, item.Release, item.RetainAssets, branch)
@@ -203,18 +215,19 @@ func (s *Syncer) Run(ctx context.Context) (summary Summary, resultErr error) {
 
 func (s *Syncer) targetBranch(ctx context.Context) (string, error) {
 	if s.config.GiteeBranch != "" {
-		s.logger.Info("using configured Gitee branch", "branch", s.config.GiteeBranch)
+		s.logger.Info("使用指定的 Gitee 目标分支", "分支", s.config.GiteeBranch)
 		return s.config.GiteeBranch, nil
 	}
 	branch, err := s.gitee.DefaultBranch(ctx)
 	if err != nil {
 		return "", fmt.Errorf("get Gitee default branch: %w", err)
 	}
+	s.logger.Info("已识别 Gitee 默认分支", "分支", branch)
 	return branch, nil
 }
 
 func (s *Syncer) cleanRelease(ctx context.Context, release domain.Release, branch string) error {
-	s.logger.Info("deleting old Gitee release to remove extra assets", "tag", release.TagName, "release_id", release.ID)
+	s.logger.Info("为清理多余附件，开始重建已有 Gitee Release", "标签", release.TagName, "Gitee Release ID", release.ID)
 	if err := s.gitee.DeleteRelease(ctx, release.ID); err != nil {
 		if httpx.IsUnknown(err) {
 			_, found, inspectErr := s.gitee.FindReleaseByID(ctx, release.ID)
@@ -229,7 +242,7 @@ func (s *Syncer) cleanRelease(ctx context.Context, release domain.Release, branc
 			if found {
 				return fmt.Errorf("delete Gitee release %q (%d) has an unknown outcome; the release is still visible: %w", release.TagName, release.ID, err)
 			}
-			s.logger.Warn("delete response was lost but the old release is no longer visible; continuing recreation", "tag", release.TagName, "release_id", release.ID)
+			s.logger.Warn("删除响应丢失，但旧 Release 已不可见；继续重建", "标签", release.TagName, "Gitee Release ID", release.ID)
 		} else {
 			return fmt.Errorf("delete Gitee release %q (%d): %w", release.TagName, release.ID, err)
 		}
@@ -244,6 +257,7 @@ func (s *Syncer) cleanRelease(ctx context.Context, release domain.Release, branc
 		Prerelease:      release.Prerelease,
 		TargetCommitish: branch,
 	}
+	s.logger.Info("开始重新创建 Gitee Release", "标签", release.TagName, "目标分支", branch)
 	created, err := s.gitee.CreateRelease(ctx, input)
 	if err != nil {
 		if httpx.IsUnknown(err) {
@@ -270,6 +284,16 @@ func (s *Syncer) syncRelease(ctx context.Context, run *staging.Run, release doma
 		stage    *staging.ReleaseStage
 		prepared []staging.PreparedAsset
 	)
+	assetCount := 0
+	if retainAssets {
+		assetCount = len(release.Assets)
+	}
+	s.logger.Info(
+		"开始同步 Release",
+		"标签", release.TagName,
+		"附件总数", len(release.Assets),
+		"本次同步附件数", assetCount,
+	)
 	if retainAssets && len(release.Assets) != 0 {
 		var err error
 		stage, err = run.NewRelease(release.TagName, release.Assets)
@@ -279,22 +303,39 @@ func (s *Syncer) syncRelease(ctx context.Context, run *staging.Run, release doma
 		defer func() {
 			if stage != nil {
 				if err := stage.Cleanup(); err != nil {
-					s.logger.Warn("could not clean release staging directory", "tag", release.TagName)
+					s.logger.Warn("清理 Release 临时目录失败", "标签", release.TagName)
 				}
 			}
 		}()
-		for _, asset := range release.Assets {
+		for index, asset := range release.Assets {
+			s.logger.Info(
+				"开始下载 GitHub 附件",
+				"标签", release.TagName,
+				"进度", progress(index+1, len(release.Assets)),
+				"文件", asset.Name,
+				"预计大小", assetSize(asset.Size),
+			)
 			var transformAsset staging.TransformFunc
 			if asset.Name == "latest.json" && s.config.LatestJSONURLReplace {
 				transformAsset = func(content []byte) ([]byte, error) {
 					return transform.LatestJSON(content, true, s.transformOpts)
 				}
 			}
-			item, err := stage.PrepareAsset(ctx, asset, s.github.DownloadAsset, transformAsset)
+			downloadProgress := newTransferProgress(s.logger, "GitHub 附件下载", release.TagName, asset.Name, index+1, len(release.Assets), asset.Size)
+			item, err := stage.PrepareAsset(ctx, asset, func(downloadCtx context.Context, downloadAsset domain.Asset, destination io.Writer) error {
+				return s.github.DownloadAsset(downloadCtx, downloadAsset, &progressWriter{writer: destination, progress: downloadProgress})
+			}, transformAsset)
 			if err != nil {
 				return nil, fmt.Errorf("prepare asset %q for release %q: %w", asset.Name, release.TagName, err)
 			}
 			prepared = append(prepared, item)
+			s.logger.Info(
+				"GitHub 附件下载完成",
+				"标签", release.TagName,
+				"进度", progress(index+1, len(release.Assets)),
+				"文件", item.OriginalName,
+				"实际大小", byteSize(item.Size),
+			)
 		}
 	}
 
@@ -305,6 +346,7 @@ func (s *Syncer) syncRelease(ctx context.Context, run *staging.Run, release doma
 		Prerelease:      release.Prerelease,
 		TargetCommitish: branch,
 	}
+	s.logger.Info("开始创建 Gitee Release", "标签", release.TagName, "目标分支", branch)
 	created, err := s.gitee.CreateRelease(ctx, input)
 	if err != nil {
 		if httpx.IsUnknown(err) {
@@ -319,6 +361,7 @@ func (s *Syncer) syncRelease(ctx context.Context, run *staging.Run, release doma
 		return nil, err
 	}
 	if stage == nil {
+		s.logger.Info("Release 同步完成", "标签", release.TagName, "已上传附件数", 0)
 		return nil, nil
 	}
 
@@ -328,7 +371,15 @@ func (s *Syncer) syncRelease(ctx context.Context, run *staging.Run, release doma
 		if err != nil {
 			return nil, fmt.Errorf("open staged asset %q: %w", item.OriginalName, err)
 		}
-		uploadErr := s.gitee.UploadAsset(ctx, created.ID, item.OriginalName, file)
+		s.logger.Info(
+			"开始上传附件到 Gitee",
+			"标签", release.TagName,
+			"进度", progress(index+1, len(prepared)),
+			"文件", item.OriginalName,
+			"文件大小", byteSize(item.Size),
+		)
+		uploadProgress := newTransferProgress(s.logger, "Gitee 附件上传", release.TagName, item.OriginalName, index+1, len(prepared), &item.Size)
+		uploadErr := s.gitee.UploadAsset(ctx, created.ID, item.OriginalName, &progressReader{reader: file, progress: uploadProgress})
 		closeErr := file.Close()
 		if uploadErr == nil && closeErr != nil {
 			uploadErr = fmt.Errorf("close staged asset %q: %w", item.OriginalName, closeErr)
@@ -345,11 +396,18 @@ func (s *Syncer) syncRelease(ctx context.Context, run *staging.Run, release doma
 			return nil, fmt.Errorf("upload asset %q to Gitee release %q: %w", item.OriginalName, release.TagName, uploadErr)
 		}
 		confirmed = append(confirmed, item.OriginalName)
+		s.logger.Info(
+			"Gitee 附件上传完成",
+			"标签", release.TagName,
+			"进度", progress(index+1, len(prepared)),
+			"文件", item.OriginalName,
+		)
 	}
 	if err := stage.Cleanup(); err != nil {
-		s.logger.Warn("could not clean successful release staging directory", "tag", release.TagName)
+		s.logger.Warn("清理已完成 Release 的临时目录失败", "标签", release.TagName)
 	}
 	stage = nil
+	s.logger.Info("Release 同步完成", "标签", release.TagName, "已上传附件数", len(confirmed))
 	return confirmed, nil
 }
 
@@ -370,6 +428,7 @@ func (s *Syncer) confirmCreatedRelease(ctx context.Context, created domain.Relea
 			RecoveryHint: "creation response was received but the release is not visible through the Gitee Release API; no attachment was uploaded",
 		}
 	}
+	s.logger.Info("Gitee Release 已创建并确认", "标签", expectedTag, "Gitee Release ID", created.ID)
 	return nil
 }
 
@@ -385,7 +444,7 @@ func (s *Syncer) reconcileUploadFailure(ctx context.Context, tag string, created
 		}
 	}
 	if found && remoteHasAsset(remote, asset) {
-		s.logger.Warn("upload returned an error but the asset is present remotely", "tag", tag, "asset", asset.Name, "release_id", created.ID)
+		s.logger.Warn("上传请求返回错误，但附件已在 Gitee 可见；按成功处理", "标签", tag, "文件", asset.Name, "Gitee Release ID", created.ID)
 		return true, nil
 	}
 	if !found {
@@ -455,6 +514,177 @@ func (s *Syncer) wait(ctx context.Context, delay time.Duration) error {
 func (s *Syncer) warning(summary *Summary, message string) {
 	summary.Warnings = append(summary.Warnings, message)
 	s.logger.Warn(message)
+}
+
+func progress(current, total int) string {
+	return fmt.Sprintf("%d/%d", current, total)
+}
+
+func assetSize(size *int64) string {
+	if size == nil {
+		return "未知"
+	}
+	return byteSize(*size)
+}
+
+func byteSize(size int64) string {
+	const unit = int64(1024)
+	if size < unit {
+		return fmt.Sprintf("%d B", size)
+	}
+	if size < unit*unit {
+		return fmt.Sprintf("%.1f KiB", float64(size)/float64(unit))
+	}
+	if size < unit*unit*unit {
+		return fmt.Sprintf("%.1f MiB", float64(size)/float64(unit*unit))
+	}
+	return fmt.Sprintf("%.1f GiB", float64(size)/float64(unit*unit*unit))
+}
+
+type transferProgress struct {
+	logger           *slog.Logger
+	operation        string
+	tag              string
+	file             string
+	fileIndex        int
+	fileCount        int
+	total            int64
+	transferred      int64
+	nextPercent      int64
+	nextUnknownLogAt int64
+	startedAt        time.Time
+}
+
+func newTransferProgress(logger *slog.Logger, operation, tag, file string, fileIndex, fileCount int, size *int64) *transferProgress {
+	total := int64(-1)
+	if size != nil {
+		total = *size
+	}
+	return &transferProgress{
+		logger:           logger,
+		operation:        operation,
+		tag:              tag,
+		file:             file,
+		fileIndex:        fileIndex,
+		fileCount:        fileCount,
+		total:            total,
+		nextPercent:      25,
+		nextUnknownLogAt: 1 << 20,
+		startedAt:        time.Now(),
+	}
+}
+
+func (p *transferProgress) Add(count int) {
+	if p == nil || count <= 0 {
+		return
+	}
+	p.transferred += int64(count)
+	if p.total > 0 {
+		percentage := p.transferred * 100 / p.total
+		if percentage < p.nextPercent && p.transferred < p.total {
+			return
+		}
+		for p.nextPercent <= percentage {
+			p.nextPercent += 25
+		}
+	} else if p.transferred < p.nextUnknownLogAt {
+		return
+	} else {
+		p.nextUnknownLogAt += 1 << 20
+	}
+	p.logProgress()
+}
+
+func (p *transferProgress) Reset() {
+	if p == nil {
+		return
+	}
+	if p.transferred > 0 {
+		if p.logger != nil {
+			p.logger.Warn(
+				"传输响应中断，正在重新传输附件",
+				"标签", p.tag,
+				"文件", p.file,
+				"已丢弃数据", byteSize(p.transferred),
+			)
+		}
+	}
+	p.transferred = 0
+	p.nextPercent = 25
+	p.nextUnknownLogAt = 1 << 20
+	p.startedAt = time.Now()
+}
+
+func (p *transferProgress) logProgress() {
+	if p == nil || p.logger == nil {
+		return
+	}
+	attributes := []any{
+		"标签", p.tag,
+		"文件序号", progress(p.fileIndex, p.fileCount),
+		"文件", p.file,
+		"已传输", byteSize(p.transferred),
+	}
+	if p.total > 0 {
+		attributes = append(attributes,
+			"总大小", byteSize(p.total),
+			"完成比例", fmt.Sprintf("%d%%", min(p.transferred*100/p.total, 100)),
+		)
+	}
+	elapsed := time.Since(p.startedAt)
+	if elapsed > 0 && p.transferred > 0 {
+		rate := int64(float64(p.transferred) / elapsed.Seconds())
+		attributes = append(attributes, "传输速度", byteSize(rate)+"/s")
+		if p.total > p.transferred && rate > 0 {
+			remaining := time.Duration(float64(p.total-p.transferred)/float64(rate)) * time.Second
+			attributes = append(attributes, "预计剩余", remaining.Round(time.Second).String())
+		}
+	}
+	p.logger.Info(p.operation+"进度", attributes...)
+}
+
+type progressWriter struct {
+	writer   io.Writer
+	progress *transferProgress
+}
+
+func (w *progressWriter) Write(content []byte) (int, error) {
+	count, err := w.writer.Write(content)
+	w.progress.Add(count)
+	return count, err
+}
+
+func (w *progressWriter) Seek(offset int64, whence int) (int64, error) {
+	seeker, ok := w.writer.(io.Seeker)
+	if !ok {
+		return 0, errors.New("progress writer does not support seeking")
+	}
+	return seeker.Seek(offset, whence)
+}
+
+func (w *progressWriter) Truncate(size int64) error {
+	truncater, ok := w.writer.(interface{ Truncate(int64) error })
+	if !ok {
+		return errors.New("progress writer does not support truncation")
+	}
+	if err := truncater.Truncate(size); err != nil {
+		return err
+	}
+	if size == 0 {
+		w.progress.Reset()
+	}
+	return nil
+}
+
+type progressReader struct {
+	reader   io.Reader
+	progress *transferProgress
+}
+
+func (r *progressReader) Read(content []byte) (int, error) {
+	count, err := r.reader.Read(content)
+	r.progress.Add(count)
+	return count, err
 }
 
 // StablePlanText returns a concise, deterministic listing for human dry-runs.

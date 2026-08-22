@@ -43,7 +43,15 @@ func run(args []string, stdout, stderr io.Writer, lookup config.LookupEnv) int {
 	for _, warning := range warnings {
 		logger.Warn(warning)
 	}
-	logger.Info("starting release synchronization", "config", config.RedactedSummary(cfg))
+	logger.Info(
+		"开始同步 Release：GitHub → Gitee",
+		"GitHub 源仓库", repositoryName(cfg.GitHubOwner, cfg.GitHubRepo),
+		"Gitee 目标仓库", repositoryName(cfg.GiteeOwner, cfg.GiteeRepo),
+		"拉取 GitHub Release 上限", cfg.GitHubLatestReleaseCount,
+		"保留附件的最新 Release 数", cfg.GiteeRetainReleaseAttachFilesCount,
+		"Gitee 目标分支", configuredBranch(cfg.GiteeBranch),
+		"执行模式", executionMode(cfg.DryRun),
+	)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
@@ -65,11 +73,12 @@ func run(args []string, stdout, stderr io.Writer, lookup config.LookupEnv) int {
 		return 1
 	}
 	logger.Info(
-		"release synchronization completed",
-		"dry_run", summary.DryRun,
-		"cleaned", len(summary.CleanedTags),
-		"created", len(summary.CreatedTags),
-		"skipped", len(summary.SkippedTags),
+		"Release 同步完成",
+		"仅预览", summary.DryRun,
+		"已重建 Release 数", len(summary.CleanedTags),
+		"已创建 Release 数", len(summary.CreatedTags),
+		"已跳过 Release 数", len(summary.SkippedTags),
+		"已上传附件数", uploadedAssetCount(summary.Uploaded),
 	)
 	return 0
 }
@@ -83,4 +92,30 @@ func newLogger(cfg config.Config, output io.Writer) *slog.Logger {
 		level = slog.LevelError + 4
 	}
 	return slog.New(slog.NewTextHandler(output, &slog.HandlerOptions{Level: level}))
+}
+
+func repositoryName(owner, repo string) string {
+	return owner + "/" + repo
+}
+
+func configuredBranch(branch string) string {
+	if branch == "" {
+		return "自动检测"
+	}
+	return branch
+}
+
+func executionMode(dryRun bool) string {
+	if dryRun {
+		return "仅预览，不写入 Gitee"
+	}
+	return "实际同步"
+}
+
+func uploadedAssetCount(uploaded map[string][]string) int {
+	count := 0
+	for _, assets := range uploaded {
+		count += len(assets)
+	}
+	return count
 }

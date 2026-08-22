@@ -5,11 +5,14 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"sync-release-to-gitee/internal/domain"
 	"sync-release-to-gitee/internal/httpx"
+	"sync-release-to-gitee/internal/staging"
 )
 
 func TestListReleasesUsesFirstPageAndNormalizesBody(t *testing.T) {
@@ -64,6 +67,70 @@ func TestDownloadAssetDoesNotAttachGitHubToken(t *testing.T) {
 		t.Fatalf("payload = %q", target.String())
 	}
 }
+
+func TestDownloadAssetRetriesIntoStagedDestination(t *testing.T) {
+	t.Parallel()
+	var calls int
+	client := New("https://api.example.test", "owner", "repo", "git-token", httpx.New(httpx.Options{
+		DownloadDoer: doerFunc(func(request *http.Request) (*http.Response, error) {
+			calls++
+			if calls == 1 {
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Status:     "200 OK",
+					Header:     make(http.Header),
+					Body:       interruptedBody{},
+					Request:    request,
+				}, nil
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader("complete")),
+				Request:    request,
+			}, nil
+		}),
+		Sleeper: httpx.SleepFunc(func(context.Context, time.Duration) error { return nil }),
+		Retry:   httpx.RetryPolicy{MaxAttempts: 2, BaseDelay: time.Millisecond, MaxDelay: time.Millisecond},
+	}))
+
+	run, err := staging.NewRun(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer run.Cleanup()
+	size := int64(len("complete"))
+	asset := domain.Asset{Name: "artifact.zip", Size: &size, DownloadURL: "https://downloads.example.test/artifact.zip"}
+	stage, err := run.NewRelease("v1.0.0", []domain.Asset{asset})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := stage.PrepareAsset(context.Background(), asset, client.DownloadAsset, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(prepared.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 || string(content) != "complete" {
+		t.Fatalf("calls=%d content=%q, want 2 and complete", calls, content)
+	}
+}
+
+type doerFunc func(*http.Request) (*http.Response, error)
+
+func (f doerFunc) Do(request *http.Request) (*http.Response, error) { return f(request) }
+
+type interruptedBody struct{}
+
+func (interruptedBody) Read(buffer []byte) (int, error) {
+	copy(buffer, "partial")
+	return len("partial"), io.ErrUnexpectedEOF
+}
+
+func (interruptedBody) Close() error { return nil }
 
 func domainAsset(name, downloadURL string) domain.Asset {
 	return domain.Asset{Name: name, DownloadURL: downloadURL}

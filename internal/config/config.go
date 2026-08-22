@@ -333,7 +333,7 @@ func resolveBase(label, cliValue string, cliSet bool, canonicalEnv, legacyEnv, d
 	legacy, legacySet := lookup(legacyEnv)
 	if canonicalSet {
 		if legacySet && canonical != legacy {
-			warnings = append(warnings, fmt.Sprintf("both %s and %s are set for %s; using %s", canonicalEnv, legacyEnv, label, canonicalEnv))
+			warnings = append(warnings, fmt.Sprintf("%s 与 %s 同时配置了 %s，已采用 %s 的值", canonicalEnv, legacyEnv, label, canonicalEnv))
 		}
 		return canonical, warnings
 	}
